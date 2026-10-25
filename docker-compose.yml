@@ -1,5 +1,6 @@
 services:
   remnawave-node:
+    image: ghcr.io/yaadept/remnawave-node-rust:claude-delai-04v0ho
     build: .
     container_name: remnawave-node
     restart: always

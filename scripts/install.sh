@@ -12,6 +12,7 @@ set -euo pipefail
 NAME="${NODE_CONTAINER:-remnawave-node}"
 OLD="${NAME}-old"
 IMAGE="remnawave-node-rust:local"
+REGISTRY_IMAGE="${REGISTRY_IMAGE:-ghcr.io/yaadept/remnawave-node-rust}"
 REPO_URL="${REPO_URL:-https://github.com/yaadept/remnanode-.git}"
 REPO_BRANCH="${REPO_BRANCH:-claude/delai-04v0ho}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/remnanode-rust}"
@@ -85,23 +86,30 @@ if [ -z "${ENVV[SECRET_KEY]:-}" ]; then
 fi
 ENVV[NODE_PORT]="${ENVV[NODE_PORT]:-2222}"
 
-# 2. source: use this checkout if the script runs from one, else clone
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)"
-if [ -n "$HERE" ] && [ -f "$HERE/../Dockerfile" ]; then
-  SRC="$(cd "$HERE/.." && pwd)"
+# 2. get the image: pull the prebuilt one from GHCR, else build it from source
+TAG="${IMAGE_TAG:-${REPO_BRANCH//\//-}}"
+echo "Pulling $REGISTRY_IMAGE:$TAG ..."
+if docker pull "$REGISTRY_IMAGE:$TAG" >/dev/null 2>&1; then
+  docker tag "$REGISTRY_IMAGE:$TAG" "$IMAGE"
+  echo "Pulled the prebuilt image."
 else
-  command -v git >/dev/null || die "git is not installed"
-  if [ -d "$INSTALL_DIR/.git" ]; then
-    git -C "$INSTALL_DIR" fetch --depth 1 origin "$REPO_BRANCH" && git -C "$INSTALL_DIR" checkout -q -B "$REPO_BRANCH" FETCH_HEAD
+  echo "No prebuilt image available (not published yet or the package is private); building from source."
+  HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)"
+  if [ -n "$HERE" ] && [ -f "$HERE/../Dockerfile" ]; then
+    SRC="$(cd "$HERE/.." && pwd)"
   else
-    git clone --depth 1 -b "$REPO_BRANCH" "$REPO_URL" "$INSTALL_DIR"
+    command -v git >/dev/null || die "git is not installed"
+    if [ -d "$INSTALL_DIR/.git" ]; then
+      git -C "$INSTALL_DIR" fetch --depth 1 origin "$REPO_BRANCH" && git -C "$INSTALL_DIR" checkout -q -B "$REPO_BRANCH" FETCH_HEAD
+    else
+      git clone --depth 1 -b "$REPO_BRANCH" "$REPO_URL" "$INSTALL_DIR"
+    fi
+    SRC="$INSTALL_DIR"
   fi
-  SRC="$INSTALL_DIR"
+  # 3. build before touching the old node, so it keeps serving during the (long) compile
+  echo "Building the image (several minutes on a small server)..."
+  docker build -t "$IMAGE" "$SRC"
 fi
-
-# 3. build first, so the old node keeps serving during the (long) compile
-echo "Building the image (several minutes on a small server)..."
-docker build -t "$IMAGE" "$SRC"
 
 # 4. swap
 if exists "$NAME"; then
