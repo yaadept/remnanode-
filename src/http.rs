@@ -1,7 +1,14 @@
 //! Connection plumbing: a hyper accept loop that can *destroy* a connection without
 //! answering (what the original does for bad JWTs, unknown routes and bad internal tokens).
 
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    net::SocketAddr,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
+};
 
 use axum::{Router, body::Body};
 use hyper::{Request, body::Incoming};
@@ -12,6 +19,7 @@ use hyper_util::{
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::{TcpListener, UnixListener},
+    sync::Semaphore,
 };
 use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
@@ -19,6 +27,9 @@ use tower::ServiceExt;
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const HEADERS_TIMEOUT: Duration = Duration::from_secs(61);
+/// Upper bound on simultaneously open connections; the panel needs a handful. Excess
+/// connections are closed right away so idle sockets cannot exhaust file descriptors.
+const MAX_CONNECTIONS: usize = 2048;
 
 /// Cancel it from a handler to drop the connection on the floor.
 #[derive(Clone)]
@@ -62,6 +73,8 @@ pub async fn serve_tls(
     shutdown: CancellationToken,
 ) {
     let acceptor = TlsAcceptor::from(config);
+    let permits = Arc::new(Semaphore::new(MAX_CONNECTIONS));
+    let dropped = AtomicU64::new(0);
     loop {
         let (tcp, peer) = tokio::select! {
             _ = shutdown.cancelled() => return,
@@ -74,10 +87,18 @@ pub async fn serve_tls(
                 }
             }
         };
+        let Ok(permit) = permits.clone().try_acquire_owned() else {
+            // unauthenticated peers can trigger this: log the first drop of a burst only
+            if dropped.fetch_add(1, Ordering::Relaxed).is_multiple_of(1000) {
+                tracing::warn!("connection limit ({MAX_CONNECTIONS}) reached, dropping {peer}");
+            }
+            continue;
+        };
         let _ = tcp.set_nodelay(true);
         let acceptor = acceptor.clone();
         let router = router.clone();
         tokio::spawn(async move {
+            let _permit = permit;
             match tokio::time::timeout(HANDSHAKE_TIMEOUT, acceptor.accept(tcp)).await {
                 Ok(Ok(tls)) => serve_conn(tls, router, Some(peer)).await,
                 Ok(Err(e)) => tracing::debug!("TLS handshake with {peer} failed: {e}"),

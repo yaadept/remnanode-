@@ -101,7 +101,16 @@ impl XrayService {
         net: NetworkStats,
     ) -> anyhow::Result<Arc<Self>> {
         let http = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::limited(5))
+            .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                // downloads are https-only, including every redirect hop
+                if attempt.url().scheme() != "https" {
+                    attempt.error("redirect to a non-https url")
+                } else if attempt.previous().len() >= 5 {
+                    attempt.error("too many redirects")
+                } else {
+                    attempt.follow()
+                }
+            }))
             .build()?;
         let mut loader = CoreLoader::new(http.clone(), cfg.xray_bin.clone());
         loader.ensure_link().await;

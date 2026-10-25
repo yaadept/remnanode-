@@ -11,7 +11,6 @@ readme = "README.md"
 anyhow = "1.0.104"
 axum = "0.8"
 base64 = "0.23.1"
-bytes = "1.12.1"
 chrono = { version = "0.4.45", features = ["serde"] }
 futures-util = "0.3.34"
 glob = "0.3.4"
@@ -30,7 +29,6 @@ rustls-pki-types = "1.15.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = "0.11.1"
-thiserror = "2.0.21"
 tokio = { version = "1.54.1", features = ["full"] }
 tokio-rustls = "0.26.6"
 tokio-util = "0.7.20"
