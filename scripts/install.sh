@@ -31,8 +31,7 @@ detect_old() {
   for id in $(docker ps -a -q); do
     img=$(docker inspect -f '{{.Config.Image}}' "$id")
     name=$(docker inspect -f '{{.Name}}' "$id"); name=${name#/}
-    [ "$img" = "$IMAGE" ] && continue
-    [[ "$name" == *-old ]] && continue
+    [[ "$name" == *-old || "$name" == *-prev ]] && continue
     if [[ "$img" == *remnawave/node* ]] ||
        docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$id" | grep -q '^SECRET_KEY='; then
       echo "$name"
@@ -64,6 +63,16 @@ if [ "${1:-}" = "--rollback" ]; then
   docker start "$NAME" >/dev/null
   echo "Rolled back: the previous node is running again."
   exit 0
+fi
+
+# Backup name: an official node is kept as <name>-old; when this Rust node is already
+# installed (an upgrade), the previous Rust container goes to <name>-prev and <name>-old
+# (the official node) stays untouched.
+BACKUP="$OLD"
+if exists "$NAME"; then
+  case "$(docker inspect -f '{{.Config.Image}}' "$NAME")" in
+    *remnawave-node-rust*) BACKUP="${NAME}-prev" ;;
+  esac
 fi
 
 # 1. settings: from the running container, else from the environment
@@ -113,10 +122,10 @@ fi
 
 # 4. swap
 if exists "$NAME"; then
-  exists "$OLD" && docker rm -f "$OLD" >/dev/null
+  exists "$BACKUP" && docker rm -f "$BACKUP" >/dev/null
   docker stop "$NAME" >/dev/null
-  docker rename "$NAME" "$OLD"
-  docker update --restart=no "$OLD" >/dev/null
+  docker rename "$NAME" "$BACKUP"
+  docker update --restart=no "$BACKUP" >/dev/null
 fi
 
 args=(-d --name "$NAME" --restart always --network host --cap-add NET_ADMIN)
@@ -134,8 +143,8 @@ if [ "$ok" != true ]; then
   echo "The new node did not start. Its log:" >&2
   docker logs --tail 40 "$NAME" >&2 || true
   docker rm -f "$NAME" >/dev/null 2>&1 || true
-  if exists "$OLD"; then
-    docker rename "$OLD" "$NAME"; docker update --restart=always "$NAME" >/dev/null; docker start "$NAME" >/dev/null
+  if exists "$BACKUP"; then
+    docker rename "$BACKUP" "$NAME"; docker update --restart=always "$NAME" >/dev/null; docker start "$NAME" >/dev/null
     echo "Rolled back to the previous node." >&2
   fi
   exit 1
@@ -146,5 +155,5 @@ cat <<MSG
 Done. The Rust node is running on port ${ENVV[NODE_PORT]}; the panel will reconnect on its own.
   logs:      docker logs -f $NAME
   rollback:  $0 --rollback
-  cleanup:   docker rm $OLD     (once you are happy with the new node)
+  cleanup:   docker rm $BACKUP     (once you are happy with the new node)
 MSG
