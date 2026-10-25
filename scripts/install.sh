@@ -24,8 +24,39 @@ running() { [ "$(docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null || echo
 
 command -v docker >/dev/null || die "docker is not installed"
 
+# Finds the existing official node: by image (remnawave/node) or by having SECRET_KEY set.
+detect_old() {
+  local id img name
+  for id in $(docker ps -a -q); do
+    img=$(docker inspect -f '{{.Config.Image}}' "$id")
+    name=$(docker inspect -f '{{.Name}}' "$id"); name=${name#/}
+    [ "$img" = "$IMAGE" ] && continue
+    [[ "$name" == *-old ]] && continue
+    if [[ "$img" == *remnawave/node* ]] ||
+       docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$id" | grep -q '^SECRET_KEY='; then
+      echo "$name"
+    fi
+  done
+}
+
+if [ "${1:-}" != "--rollback" ] && ! exists "$NAME"; then
+  mapfile -t FOUND < <(detect_old)
+  if [ "${#FOUND[@]}" -eq 1 ]; then
+    NAME="${FOUND[0]}"; OLD="${NAME}-old"
+    echo "Found the existing node container: '$NAME'."
+  elif [ "${#FOUND[@]}" -gt 1 ]; then
+    echo "Several candidate containers found: ${FOUND[*]}" >&2
+    die "re-run with NODE_CONTAINER=<name of your node container>"
+  fi
+fi
+
 if [ "${1:-}" = "--rollback" ]; then
-  exists "$OLD" || die "no $OLD container to roll back to"
+  if ! exists "$OLD"; then
+    # the node had a different name: look for the single "<name>-old" container
+    mapfile -t OLDS < <(docker ps -a --format '{{.Names}}' | grep -- '-old$' || true)
+    [ "${#OLDS[@]}" -eq 1 ] || die "no $OLD container to roll back to (set NODE_CONTAINER=<name> if yours is named differently)"
+    OLD="${OLDS[0]}"; NAME="${OLD%-old}"
+  fi
   docker rm -f "$NAME" >/dev/null 2>&1 || true
   docker rename "$OLD" "$NAME"
   docker update --restart=always "$NAME" >/dev/null
@@ -45,7 +76,11 @@ fi
 for c in "${CARRY[@]}"; do
   [ -n "${!c:-}" ] && ENVV[$c]="${!c}"
 done
-[ -n "${ENVV[SECRET_KEY]:-}" ] || die "SECRET_KEY not found: no '$NAME' container, and SECRET_KEY is not set"
+if [ -z "${ENVV[SECRET_KEY]:-}" ]; then
+  echo "Containers on this host:" >&2
+  docker ps -a --format '  {{.Names}}  ({{.Image}})' >&2 || true
+  die "no node container found and SECRET_KEY is not set. Re-run with NODE_CONTAINER=<name> or SECRET_KEY=<key>"
+fi
 ENVV[NODE_PORT]="${ENVV[NODE_PORT]:-2222}"
 
 # 2. source: use this checkout if the script runs from one, else clone
