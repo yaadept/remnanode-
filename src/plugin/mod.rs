@@ -907,12 +907,15 @@ impl PluginService {
         }
 
         let now = Utc::now();
+        let will_unblock_at = chrono::Duration::try_seconds(block_duration)
+            .and_then(|d| now.checked_add_signed(d))
+            .unwrap_or(DateTime::<Utc>::MAX_UTC);
         let report = TorrentBlockerReport {
             action_report: ActionReport {
                 blocked,
                 ip,
                 block_duration,
-                will_unblock_at: now_iso(now + chrono::Duration::seconds(block_duration)),
+                will_unblock_at: now_iso(will_unblock_at),
                 user_id: email,
                 processed_at: now_iso(now),
             },
@@ -1094,6 +1097,26 @@ mod tests {
 
     fn svc() -> PluginService {
         PluginService::new(Nft::new(false, false), None)
+    }
+
+    #[tokio::test]
+    async fn absurd_block_duration_does_not_panic() {
+        let s = svc();
+        {
+            let mut st = s.state.lock().unwrap();
+            st.torrent.enabled = true;
+            st.torrent.block_duration = Some(i64::MAX);
+        }
+        let hook = json!({
+            "email": "u", "level": 0, "protocol": "bittorrent", "network": "tcp",
+            "source": "tcp:203.0.113.9:1", "destination": "tcp:1.2.3.4:6881",
+            "routeTarget": null, "originalTarget": null, "inboundTag": null, "inboundName": null,
+            "inboundLocal": null, "outboundTag": null, "ts": 1
+        });
+        s.handle_xray_webhook(hook).await;
+        let reports = s.collect_reports();
+        assert_eq!(reports.len(), 1);
+        assert!(!reports[0].action_report.will_unblock_at.is_empty());
     }
 
     #[test]

@@ -43,13 +43,13 @@ pub struct InternalState {
 }
 
 impl InternalState {
-    pub fn xray_config(&self) -> Map<String, Value> {
-        self.inner
-            .lock()
-            .unwrap()
-            .xray_config
-            .clone()
-            .unwrap_or_default()
+    /// The stored config serialized in place (no deep copy of a possibly huge document).
+    pub fn xray_config_json(&self) -> Vec<u8> {
+        let g = self.inner.lock().unwrap();
+        match &g.xray_config {
+            Some(cfg) => serde_json::to_vec(cfg).unwrap_or_else(|_| b"{}".to_vec()),
+            None => b"{}".to_vec(),
+        }
     }
 
     pub fn extract_users_from_config(&self, hashes: &Hashes, new_config: Map<String, Value>) {

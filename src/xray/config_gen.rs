@@ -24,7 +24,7 @@ pub struct InternalParams<'a> {
 }
 
 pub fn generate_api_config(
-    config: &Map<String, Value>,
+    mut config: Map<String, Value>,
     tb: &TorrentBlockerState,
     internal: &InternalParams,
     has_cap_net_admin: bool,
@@ -55,26 +55,25 @@ pub fn generate_api_config(
         "listen": format!("@{}", internal.xtls_api_socket_path),
         "protocol": "tunnel",
     })];
-    if let Some(Value::Array(user)) = config.get("inbounds") {
-        inbounds.extend(user.iter().cloned());
+    if let Some(Value::Array(user)) = config.remove("inbounds") {
+        inbounds.extend(user);
     }
 
-    let mut outbounds: Vec<Value> = match config.get("outbounds") {
-        Some(Value::Array(o)) => o.clone(),
+    let mut outbounds: Vec<Value> = match config.remove("outbounds") {
+        Some(Value::Array(o)) => o,
         _ => Vec::new(),
     };
 
-    let mut routing = match config.get("routing") {
-        Some(Value::Object(r)) => r.clone(),
+    let mut routing = match config.remove("routing") {
+        Some(Value::Object(r)) => r,
         _ => Map::new(),
     };
     let mut rules = vec![json!({ "inboundTag": [API_INBOUND_TAG], "outboundTag": API_TAG })];
-    if let Some(Value::Array(user_rules)) = routing.get("rules") {
+    if let Some(Value::Array(user_rules)) = routing.remove("rules") {
         rules.extend(
             user_rules
-                .iter()
-                .filter(|r| r.get("outboundTag").and_then(Value::as_str) != Some(API_TAG))
-                .cloned(),
+                .into_iter()
+                .filter(|r| r.get("outboundTag").and_then(Value::as_str) != Some(API_TAG)),
         );
     }
 
@@ -111,7 +110,7 @@ pub fn generate_api_config(
 
     routing.insert("rules".into(), Value::Array(rules));
 
-    let mut result = config.clone();
+    let mut result = config;
     result.insert("stats".into(), json!({}));
     result.insert(
         "api".into(),
@@ -163,7 +162,7 @@ mod tests {
 
     #[test]
     fn wraps_config_with_api_plumbing() {
-        let out = generate_api_config(&base(), &TorrentBlockerState::default(), &params(), true);
+        let out = generate_api_config(base(), &TorrentBlockerState::default(), &params(), true);
         assert_eq!(out["stats"], json!({}));
         assert_eq!(out["api"]["tag"], "REMNAWAVE_API");
         let inbounds = out["inbounds"].as_array().unwrap();
@@ -181,7 +180,7 @@ mod tests {
 
     #[test]
     fn online_stats_follow_capability() {
-        let out = generate_api_config(&base(), &TorrentBlockerState::default(), &params(), false);
+        let out = generate_api_config(base(), &TorrentBlockerState::default(), &params(), false);
         assert_eq!(out["policy"]["levels"]["0"]["statsUserOnline"], false);
     }
 
@@ -192,7 +191,7 @@ mod tests {
             include_rule_tags: ["r2".to_string()].into(),
             rule_position: 1,
         };
-        let out = generate_api_config(&base(), &tb, &params(), true);
+        let out = generate_api_config(base(), &tb, &params(), true);
         let rules = out["routing"]["rules"].as_array().unwrap();
         assert_eq!(rules[2]["protocol"], json!(["bittorrent"]));
         assert_eq!(

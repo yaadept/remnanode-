@@ -343,6 +343,10 @@ async fn recreate_tables(State(app): Ctx) -> ApiResult {
 
 // ------------------------------------------------------------------ internal router (Xray -> node)
 
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
 async fn token_auth(State(app): Ctx, req: Request, next: Next) -> Response {
     let token = req.uri().query().and_then(|q| {
         q.split('&')
@@ -350,7 +354,11 @@ async fn token_auth(State(app): Ctx, req: Request, next: Next) -> Response {
             .map(str::to_string)
     });
     let expected = &app.cfg.internal_rest_token;
-    if token.as_deref() == Some(expected.as_str()) && !expected.is_empty() {
+    if !expected.is_empty()
+        && token
+            .as_deref()
+            .is_some_and(|t| ct_eq(t.as_bytes(), expected.as_bytes()))
+    {
         return next.run(req).await;
     }
     destroy(req.extensions()).await
@@ -367,8 +375,12 @@ pub fn internal_router(app: Arc<App>) -> Router {
         .with_state(app)
 }
 
-async fn internal_get_config(State(app): Ctx) -> Json<Value> {
-    Json(Value::Object(app.internal.xray_config()))
+async fn internal_get_config(State(app): Ctx) -> Response {
+    (
+        [(header::CONTENT_TYPE, "application/json")],
+        app.internal.xray_config_json(),
+    )
+        .into_response()
 }
 
 async fn internal_webhook(State(app): Ctx, body: Bytes) -> StatusCode {
@@ -379,5 +391,18 @@ async fn internal_webhook(State(app): Ctx, body: Bytes) -> StatusCode {
             StatusCode::OK
         }
         Err(_) => StatusCode::BAD_REQUEST,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ct_eq;
+
+    #[test]
+    fn constant_time_compare() {
+        assert!(ct_eq(b"abc", b"abc"));
+        assert!(!ct_eq(b"abc", b"abd"));
+        assert!(!ct_eq(b"abc", b"abcd"));
+        assert!(!ct_eq(b"", b"a"));
     }
 }

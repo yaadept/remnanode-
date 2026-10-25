@@ -214,6 +214,7 @@ fn spawn_child(
 async fn pump<R: AsyncRead + Unpin>(reader: R, forward: bool, logs: Arc<Mutex<VecDeque<String>>>) {
     let mut lines = BufReader::new(reader).lines();
     while let Ok(Some(line)) = lines.next_line().await {
+        let line = redact_token(&line);
         if forward {
             tracing::info!(target: "xray", "{line}");
         }
@@ -223,6 +224,23 @@ async fn pump<R: AsyncRead + Unpin>(reader: R, forward: bool, logs: Arc<Mutex<Ve
         }
         ring.push_back(line);
     }
+}
+
+/// Xray echoes its `-config` argument, which carries the internal REST token; keep it out of logs.
+fn redact_token(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(pos) = rest.find("token=") {
+        out.push_str(&rest[..pos + 6]);
+        let tail = &rest[pos + 6..];
+        let end = tail
+            .find(|c: char| !c.is_ascii_alphanumeric())
+            .unwrap_or(tail.len());
+        out.push_str("***");
+        rest = &tail[end..];
+    }
+    out.push_str(rest);
+    out
 }
 
 #[derive(Debug)]
@@ -293,6 +311,21 @@ pub fn coerce_semver(s: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn token_is_redacted() {
+        assert_eq!(
+            redact_token(
+                "Reading config: &{Name:@rwint-x:/internal/get-config?token=AbC123xyz Format:json}"
+            ),
+            "Reading config: &{Name:@rwint-x:/internal/get-config?token=*** Format:json}"
+        );
+        assert_eq!(redact_token("nothing here"), "nothing here");
+        assert_eq!(
+            redact_token("a token=1 b token=2"),
+            "a token=*** b token=***"
+        );
+    }
 
     #[test]
     fn semver_coercion() {

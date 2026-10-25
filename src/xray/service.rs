@@ -196,7 +196,11 @@ impl XrayService {
     }
 
     async fn start_inner(&self, body: StartRequest, system: NodeSystem) -> StartResponse {
-        let internals = &body.internals;
+        let StartRequest {
+            internals,
+            xray_config,
+        } = body;
+        let internals = &internals;
 
         if self.is_online() && !self.cfg.disable_hashed_set_check && !internals.force_restart {
             let should_restart = if self.api.sys_stats().await.is_ok() {
@@ -219,7 +223,7 @@ impl XrayService {
         }
 
         let full_config = generate_api_config(
-            &body.xray_config,
+            xray_config,
             &self.plugins.torrent_blocker_cfg(),
             &InternalParams {
                 socket_path: &self.cfg.internal_socket_path,

@@ -86,6 +86,9 @@ impl AsnDb {
             let page = self.read_page(pgno)?;
             let flags = u16::from_le_bytes(page[18..20].try_into().unwrap());
             let lower = u16::from_le_bytes(page[20..22].try_into().unwrap()) as usize;
+            if PAGE_HDR as usize + lower > page.len() {
+                bail!("corrupt page: pointer area exceeds the page");
+            }
             let n = lower / 2;
             let node = |i: usize| -> Result<Node<'_>> {
                 let ptr =
