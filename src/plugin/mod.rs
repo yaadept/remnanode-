@@ -128,7 +128,7 @@ struct NodePlugin {
     post_start: Option<PostStartPlugin>,
 }
 
-fn is_ip_or_cidr(s: &str) -> bool {
+pub(crate) fn is_ip_or_cidr(s: &str) -> bool {
     s.parse::<IpAddr>().is_ok() || s.parse::<ipnet::IpNet>().is_ok()
 }
 

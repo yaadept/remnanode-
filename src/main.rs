@@ -3,6 +3,8 @@ mod app;
 mod config;
 mod dto;
 mod error;
+#[cfg(test)]
+mod fuzz_smoke;
 mod geocheck;
 mod hashed_set;
 mod http;

@@ -227,7 +227,7 @@ async fn pump<R: AsyncRead + Unpin>(reader: R, forward: bool, logs: Arc<Mutex<Ve
 }
 
 /// Xray echoes its `-config` argument, which carries the internal REST token; keep it out of logs.
-fn redact_token(line: &str) -> String {
+pub(crate) fn redact_token(line: &str) -> String {
     let mut out = String::with_capacity(line.len());
     let mut rest = line;
     while let Some(pos) = rest.find("token=") {

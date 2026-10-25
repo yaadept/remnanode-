@@ -19,7 +19,7 @@ pub struct NodePayload {
     pub node_key_pem: String,
 }
 
-fn normalize_pem(pem: &str) -> String {
+pub(crate) fn normalize_pem(pem: &str) -> String {
     let mut s = pem.replace("\\n", "\n").replace("\r\n", "\n");
     // Make sure the BEGIN/END markers sit on their own lines.
     let mut out = String::with_capacity(s.len() + 8);
@@ -81,7 +81,7 @@ pub fn parse_node_payload(secret_key: &str) -> Result<NodePayload> {
 }
 
 /// Drops `-----BEGIN ...-----` style markers and everything that is not base64.
-fn canon(pem: &str) -> String {
+pub(crate) fn canon(pem: &str) -> String {
     let mut out = String::new();
     for line in pem.lines() {
         if line.trim_start().starts_with("-----") {

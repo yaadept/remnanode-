@@ -75,7 +75,7 @@ vless, trojan, shadowsocks, shadowsocks-2022, hysteria, сброс соедин�
 ## Проверка
 
 ```bash
-cargo test                    # 42 теста; живые тесты nft и SOCK_DESTROY сами пропускаются без прав
+cargo test                    # 49 тестов, включая детерминированный фаззинг парсеров; живые тесты nft и SOCK_DESTROY пропускаются без прав
 scripts/gen-test-secret.sh    # одноразовые CA/сертификаты/JWT-ключи в ./.dev
 NODE_PORT=2222 SECRET_KEY="$(cat .dev/secret_key)" cargo run
 scripts/call.sh GET /node/xray/healthcheck

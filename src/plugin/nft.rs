@@ -30,7 +30,7 @@ pub struct Nft {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Family {
+pub(crate) enum Family {
     V4,
     V6,
 }
@@ -58,7 +58,7 @@ impl Family {
 
 /// Canonical text for an IP or CIDR; rejects everything else so nothing user-controlled
 /// can ever reach the nft script unparsed.
-fn normalize_addr(input: &str) -> Result<(Family, String)> {
+pub(crate) fn normalize_addr(input: &str) -> Result<(Family, String)> {
     let input = input.trim();
     if input.contains('/') {
         let net: IpNet = input

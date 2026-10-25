@@ -329,7 +329,7 @@ struct Assets {
 }
 
 /// File names only: no separators, no `.`/`..`.
-fn valid_asset_name(s: &str) -> bool {
+pub(crate) fn valid_asset_name(s: &str) -> bool {
     !s.is_empty()
         && s != "."
         && s != ".."
