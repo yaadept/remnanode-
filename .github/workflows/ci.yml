@@ -23,3 +23,24 @@ jobs:
       - uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: remnawave-node:ci
+      - name: Smoke test the image
+        run: |
+          docker run --rm --entrypoint /usr/local/bin/xray remnawave-node:ci version | head -1
+          docker run --rm --entrypoint nft remnawave-node:ci --version
+          # without NODE_PORT / SECRET_KEY the node must refuse to start with a clear message
+          out=$(docker run --rm remnawave-node:ci 2>&1 || true)
+          echo "$out"
+          echo "$out" | grep -q "NODE_PORT is required"
