@@ -64,11 +64,29 @@ pub(crate) fn normalize_pem(pem: &str) -> String {
     collapsed.trim().to_string()
 }
 
+/// Decodes base64 the way Node's `Buffer.from(s, 'base64')` does: characters outside the
+/// alphabet (quotes copied from a compose file, spaces, newlines) are skipped, both the
+/// standard and the URL-safe alphabets are accepted and padding is optional.
+fn decode_base64_lenient(input: &str) -> Result<Vec<u8>> {
+    let mut clean: String = input
+        .chars()
+        .take_while(|c| *c != '=')
+        .filter_map(|c| match c {
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '+' | '/' => Some(c),
+            '-' => Some('+'),
+            '_' => Some('/'),
+            _ => None,
+        })
+        .collect();
+    // a single dangling symbol cannot encode a byte
+    if clean.len() % 4 == 1 {
+        clean.pop();
+    }
+    Ok(base64::engine::general_purpose::STANDARD_NO_PAD.decode(clean)?)
+}
+
 pub fn parse_node_payload(secret_key: &str) -> Result<NodePayload> {
-    let raw = base64::engine::general_purpose::STANDARD
-        .decode(secret_key.trim())
-        .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(secret_key.trim()))
-        .context("SECRET_KEY is not valid base64")?;
+    let raw = decode_base64_lenient(secret_key).context("SECRET_KEY is not valid base64")?;
     let parsed: NodePayload = serde_json::from_slice(&raw).map_err(|e| {
         anyhow!("SECRET_KEY contains invalid JSON or has an invalid structure: {e}")
     })?;
@@ -276,6 +294,28 @@ mod tests {
     fn canon_strips_markers() {
         let pem = "-----BEGIN PUBLIC KEY-----\nAB+/=\ncd\n-----END PUBLIC KEY-----";
         assert_eq!(canon(pem), "AB+/=cd");
+    }
+
+    #[test]
+    fn secret_key_tolerates_quotes_whitespace_and_url_safe_alphabet() {
+        let json = br#"{"caCertPem":"a","jwtPublicKey":"b","nodeCertPem":"c","nodeKeyPem":"d"}"#;
+        let std = base64::engine::general_purpose::STANDARD.encode(json);
+        let url = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json);
+        let variants = [
+            std.clone(),
+            format!("\"{std}\""),
+            format!("'{std}'"),
+            format!("  {std}\n"),
+            format!("{}\n{}", &std[..20], &std[20..]),
+            url,
+            std.trim_end_matches('=').to_string(),
+        ];
+        for v in variants {
+            let p = parse_node_payload(&v).unwrap_or_else(|e| panic!("{v:?}: {e}"));
+            assert_eq!(p.jwt_public_key, "b");
+        }
+        assert!(parse_node_payload("not base64 json").is_err());
+        assert!(parse_node_payload("").is_err());
     }
 
     #[test]

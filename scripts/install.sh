@@ -69,6 +69,8 @@ fi
 declare -A ENVV=()
 if exists "$NAME"; then
   while IFS='=' read -r k v; do
+    # compose files often have SECRET_KEY="..." which keeps the quotes in the container env
+    v="${v#\"}"; v="${v%\"}"; v="${v#\'}"; v="${v%\'}"
     for c in "${CARRY[@]}"; do [ "$k" = "$c" ] && ENVV[$k]="$v"; done
   done < <(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$NAME")
   echo "Read settings from the existing '$NAME' container."
