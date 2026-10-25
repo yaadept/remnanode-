@@ -1,0 +1,52 @@
+[package]
+name = "remnawave-node"
+# Tracks the node protocol version this port is compatible with (the panel refuses nodes < 2.7.0).
+version = "3.4.3"
+edition = "2024"
+description = "Remnawave Node rewritten in Rust"
+license = "AGPL-3.0-only"
+readme = "README.md"
+
+[dependencies]
+anyhow = "1.0.104"
+axum = "0.8"
+base64 = "0.23.1"
+bytes = "1.12.1"
+chrono = { version = "0.4.45", features = ["serde"] }
+futures-util = "0.3.34"
+glob = "0.3.4"
+hex = "0.4.3"
+hkdf = "0.13.0"
+hyper = "1.12.0"
+hyper-util = { version = "0.1.21", features = ["tokio"] }
+ipnet = "2.12.2"
+jsonwebtoken = { version = "11.1.0", features = ["rust_crypto"] }
+libc = "0.2.191"
+prost = "0.14.4"
+rand = "0.10.3"
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "json", "stream"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pki-types = "1.15.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["full"] }
+tokio-rustls = "0.26.6"
+tokio-util = "0.7.20"
+tonic = { version = "0.14.6", default-features = false, features = ["transport", "codegen"] }
+tonic-prost = "0.14.6"
+tower = "0.5.3"
+tower-http = { version = "0.7.1", features = ["compression-gzip", "compression-zstd", "compression-br", "decompression-gzip", "decompression-zstd", "decompression-br", "decompression-deflate", "limit"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+uuid = "1.29.0"
+x509-parser = { version = "0.18.1", features = ["verify"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

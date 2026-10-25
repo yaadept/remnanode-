@@ -1,0 +1,95 @@
+# Remnawave Node на Rust
+
+Переписанная на Rust нода [Remnawave](https://github.com/remnawave/node). Панель менять не нужно: нода повторяет
+HTTP-контракт официальной ноды версии **3.4.3** (mTLS + JWT, маршруты `/node/...`), а Xray запускает отдельным процессом
+и управляет им через его gRPC API.
+
+Зачем: один бинарник вместо Node.js + supervisord, образ в десятки МБ вместо ~490 МБ, заметно меньше памяти на каждом
+VPN-сервере. Скорость самого VPN не меняется, трафик гоняет Xray.
+
+> Лицензия **AGPL-3.0-only**, как у оригинала: это порт его логики и контракта.
+
+## Запуск
+
+Нужен `SECRET_KEY`, который выдаёт панель при добавлении ноды.
+
+```bash
+SECRET_KEY=... docker compose up -d --build
+```
+
+`network_mode: host` и `NET_ADMIN` нужны как у официальной ноды: Xray биндит порты на хосте, а `NET_ADMIN` включает
+файрвол-плагины и разрыв соединений удалённых пользователей. Без `NET_ADMIN` нода работает, но эти функции отключены.
+
+Без Docker: `cargo build --release`, затем рядом должны быть бинарник Xray (`XRAY_BIN`), его `geoip.dat`/`geosite.dat`
+(`XRAY_LOCATION_ASSET`) и, для файрвол-плагинов, утилита `nft`.
+
+### Переменные окружения
+
+| Переменная | По умолчанию | Описание |
+| --- | --- | --- |
+| `NODE_PORT` | обязательна | порт HTTPS (mTLS) API |
+| `SECRET_KEY` | обязательна | base64 от JSON с CA, сертификатом/ключом ноды и публичным ключом JWT |
+| `SNI_VERIFICATION` | `false` | пускать только на SNI, выведенный из ключей (HKDF-SHA256, контекст `rw-v1`) |
+| `DISABLE_HASHED_SET_CHECK` | `false` | всегда перезапускать Xray на `start`, не сверяя отпечатки пользователей |
+| `NFTABLES_LOGGING` | `true` | логировать дропы ingress-фильтра |
+| `NFTABLES_ACCEPT_REPLY_TRAFFIC` | `false` | пропускать ответный трафик (`ct direction reply accept`) до проверки ingress-наборов |
+| `XRAY_BIN` | `/usr/local/bin/xray` | бинарник Xray |
+| `XRAY_LOCATION_ASSET` | `/usr/local/share/xray` | каталог `geoip.dat`/`geosite.dat` и кастомных assets |
+| `ASN_LMDB_PATH` | `/usr/local/share/asn/asn-prefixes.lmdb` | база ASN для списков `asList` |
+| `GEOCHECK_BIN` | `/usr/local/bin/geocheck` | бинарник для `get-geocheck` |
+| `XRAY_FORWARD_LOGS` | `true` | дублировать вывод Xray в лог ноды |
+| `INTERNAL_REST_TOKEN`, `INTERNAL_SOCKET_PATH`, `XTLS_API_SOCKET_PATH` | случайные | обычно не задаются: генерируются при каждом старте |
+| `RUST_LOG` | `info` | уровень логов (`NODE_ENV=development` → `debug`) |
+
+## Что реализовано
+
+Все эндпоинты официальной ноды: `xray/{start,stop,healthcheck}`, `handler/*` (добавление/удаление пользователей
+vless, trojan, shadowsocks, shadowsocks-2022, hysteria, сброс соединений), `stats/*`, `plugin/*`
+(sync, torrent-blocker, nftables). Внутри:
+
+- mTLS (TLS 1.3, клиентский сертификат от CA панели), JWT RS256, проверка целостности `SECRET_KEY`.
+  Как и у оригинала, неверный JWT, неизвестный маршрут или метод рвут соединение без ответа.
+- Xray запускается как дочерний процесс и забирает конфиг у ноды по abstract unix-сокету; gRPC к нему идёт по другому
+  abstract-сокету. Конфиг дополняется API-инбаундом, статистикой, политиками и правилом torrent-blocker.
+- Отпечатки пользователей (`HashedSet`) совпадают с панельными байт в байт, включая знаковый XOR: нода не
+  перезапускает Xray, если ничего не изменилось.
+- Плагины: ingress/egress-фильтры и torrent-blocker поверх nftables, connection-drop, pre/post-start, общие списки
+  (`ipList`, `asList`), webhooks.
+- Кастомное ядро Xray и geodata-assets по URL с проверкой sha256, как в оригинале.
+- Сжатие: gzip/br/zstd в запросах, gzip/br/zstd в ответах.
+
+## Отличия от официальной ноды
+
+- **nftables через CLI `nft`** (скрипт на stdin, одна атомарная транзакция), а не нативный netlink. Набор правил
+  повторяет описанный в `nftables-napi` (таблицы `ip remnanode` / `ip6 remnanode6`).
+- **Разрыв соединений** (`SOCK_DESTROY`) реализован напрямую через netlink `SOCK_DIAG`, без `sockdestroy`.
+  Нужны `CAP_NET_ADMIN` и ядро с `CONFIG_INET_DIAG_DESTROY`. Слушающие сокеты не трогаются.
+- **ASN-база** читается собственным ридером формата `lmdb-js` (LMDB 1.0, data version 2), который стандартный LMDB
+  открыть не может.
+- **Нет s6-overlay**: процессом Xray управляет сама нода. Как и `s6-svc -o`, упавший Xray сам не поднимается,
+  но `healthcheck` сразу показывает `xrayInternalStatusCached: false`, и панель перезапускает его штатно.
+- **Интеграции** (`integrations` в `start`) не поддерживаются: в публичной сборке оригинала их нет.
+- Небольшие исправления: `system.stats.interface` в ответе `start` заполняется (оригинал кладёт его мимо схемы);
+  инбаунд, в который успешно добавили пользователя, остаётся доступным для `remove-user`, даже если до этого он был пуст.
+
+## Проверка
+
+```bash
+cargo test                    # 42 теста; живые тесты nft и SOCK_DESTROY сами пропускаются без прав
+scripts/gen-test-secret.sh    # одноразовые CA/сертификаты/JWT-ключи в ./.dev
+NODE_PORT=2222 SECRET_KEY="$(cat .dev/secret_key)" cargo run
+scripts/call.sh GET /node/xray/healthcheck
+```
+
+Сквозной прогон на реальном Xray 26.7.28 (вручную, не в CI) показал: старт Xray с получением конфига от ноды,
+трафик VLESS-пользователя, добавленного на лету (3 МБ), отказ после удаления, обрыв активной загрузки при
+`remove-user`, статистика и онлайн-IP, пропуск рестарта по совпавшему отпечатку, trojan/shadowsocks/SS-2022,
+torrent-blocker с вебхуком от Xray, nft-наборы (в т.ч. IPv6 и 71 префикс AS15169 из реальной базы), SNI-проверка.
+
+## Не проверено
+
+- Работа с **настоящей панелью**: сертификаты, которые она выпускает, проверяются строгим `rustls`/`webpki`
+  (клиентский сертификат должен быть v3 и не содержать несовместимых EKU). Если панель не подключается, смотрите
+  лог handshake (`RUST_LOG=debug`).
+- Сборка Docker-образа (в окружении разработки не было Docker-демона).
+- hysteria-аккаунты и разрыв UDP-соединений.
